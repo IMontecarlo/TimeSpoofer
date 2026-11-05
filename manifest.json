@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TimeSpoofer",
-  "version": "2.1.2",
+  "version": "2.1.21",
   "author": "Igor Bogdanov",
   "homepage_url": "https://github.com/IMontecarlo/TimeSpoofer",
   "description": "Override timezone, locale, and reported device memory in Chromium tabs.",

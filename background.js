@@ -85,11 +85,13 @@ async function injectIntoTab(tabId, settings, frameIds) {
         hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23"
       });
       const localParts = (date) => {
+        if (!Number.isFinite(date.getTime())) return null;
         const parts = formatter.formatToParts(date);
         const get = (name) => Number(parts.find((part) => part.type === name).value);
         return { year: get("year"), month: get("month") - 1, day: get("day"), hour: get("hour"), minute: get("minute"), second: get("second"), millisecond: date.getUTCMilliseconds() };
       };
       const offset = (date) => {
+        if (!Number.isFinite(date.getTime())) return NaN;
         const parts = new NativeDateTimeFormat("en-US", {
           timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit",
           hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23"
@@ -109,10 +111,11 @@ async function injectIntoTab(tabId, settings, frameIds) {
       replaceValue(globalThis, "Date", SpoofedDate);
       replaceValue(Date.prototype, "getTimezoneOffset", function () { return offset(this); });
       const getters = { getFullYear: "year", getMonth: "month", getDate: "day", getHours: "hour", getMinutes: "minute", getSeconds: "second", getMilliseconds: "millisecond" };
-      for (const [method, part] of Object.entries(getters)) replaceValue(Date.prototype, method, function () { return localParts(this)[part]; });
-      replaceValue(Date.prototype, "getDay", function () { const p = localParts(this); return new NativeDate(NativeDate.UTC(p.year, p.month, p.day)).getUTCDay(); });
-      replaceValue(Date.prototype, "getYear", function () { return localParts(this).year - 1900; });
+      for (const [method, part] of Object.entries(getters)) replaceValue(Date.prototype, method, function () { return localParts(this)?.[part] ?? NaN; });
+      replaceValue(Date.prototype, "getDay", function () { const p = localParts(this); return p ? new NativeDate(NativeDate.UTC(p.year, p.month, p.day)).getUTCDay() : NaN; });
+      replaceValue(Date.prototype, "getYear", function () { const p = localParts(this); return p ? p.year - 1900 : NaN; });
       replaceValue(Date.prototype, "toString", function () {
+        if (!Number.isFinite(this.getTime())) return "Invalid Date";
         const parts = new NativeDateTimeFormat("en-GB", {
           timeZone: displayZone,
           weekday: "short", month: "short", day: "numeric", year: "numeric",
@@ -128,8 +131,8 @@ async function injectIntoTab(tabId, settings, frameIds) {
         const zoneLabel = /^(GMT|UTC)[+-]/.test(zoneName) ? gmtOffset : zoneName;
         return `${part("weekday")} ${part("month")} ${part("day")} ${part("year")} ${part("hour")}:${part("minute")}:${part("second")} ${gmtOffset} (${zoneLabel})`;
       });
-      replaceValue(Date.prototype, "toDateString", function () { return new NativeDateTimeFormat("en-US", { timeZone: displayZone, weekday: "short", month: "short", day: "2-digit", year: "numeric" }).format(this); });
-      replaceValue(Date.prototype, "toTimeString", function () { return new NativeDateTimeFormat("en-US", { timeZone: displayZone, hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23", timeZoneName: "short" }).format(this); });
+      replaceValue(Date.prototype, "toDateString", function () { return Number.isFinite(this.getTime()) ? new NativeDateTimeFormat("en-US", { timeZone: displayZone, weekday: "short", month: "short", day: "2-digit", year: "numeric" }).format(this) : "Invalid Date"; });
+      replaceValue(Date.prototype, "toTimeString", function () { return Number.isFinite(this.getTime()) ? new NativeDateTimeFormat("en-US", { timeZone: displayZone, hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23", timeZoneName: "short" }).format(this) : "Invalid Date"; });
 
       const dateLocaleMethods = {
         toLocaleString: {
@@ -146,6 +149,7 @@ async function injectIntoTab(tabId, settings, frameIds) {
       ]);
       for (const [method, defaultsForMethod] of Object.entries(dateLocaleMethods)) {
         replaceValue(Date.prototype, method, function (requestedLocale, requestedOptions) {
+          if (!Number.isFinite(this.getTime())) return "Invalid Date";
           const options = requestedOptions == null
             ? { ...defaultsForMethod }
             : Object.fromEntries(Object.entries(requestedOptions).filter(([key]) => dateTimeOptionNames.has(key)));
