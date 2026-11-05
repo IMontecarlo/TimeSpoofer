@@ -79,9 +79,8 @@ async function injectIntoTab(tabId, settings, frameIds) {
         Object.defineProperty(object, key, descriptor);
       };
       const replaceValue = (object, key, value) => replace(object, key, { configurable: true, writable: true, value });
-      const replaceGetter = (object, key, getter) => {
-        const old = Object.getOwnPropertyDescriptor(object, key);
-        replace(object, key, { configurable: true, enumerable: old?.enumerable ?? true, get: getter });
+      const replaceGetter = (object, key, getter, enumerable = false) => {
+        replace(object, key, { configurable: true, enumerable, get: getter });
       };
 
       const timezone = settings.timezone;
@@ -330,14 +329,13 @@ async function injectIntoTab(tabId, settings, frameIds) {
         replaceValue(Native.prototype, "constructor", LocaleConstructor);
       }
 
-      const navigatorPrototype = Object.getPrototypeOf(navigator);
       const navigatorLanguages = [locale];
       const baseLanguage = locale.split("-")[0];
       if (baseLanguage.toLowerCase() !== locale.toLowerCase()) navigatorLanguages.push(baseLanguage);
-      replaceGetter(navigatorPrototype, "language", () => locale);
-      replaceGetter(navigatorPrototype, "languages", () => [...navigatorLanguages]);
-      replaceGetter(navigatorPrototype, "deviceMemory", () => Number(settings.deviceMemory));
-      replaceGetter(navigatorPrototype, "hardwareConcurrency", () => Number(settings.hardwareConcurrency));
+      replaceGetter(navigator, "language", () => locale);
+      replaceGetter(navigator, "languages", () => [...navigatorLanguages]);
+      replaceGetter(navigator, "deviceMemory", () => Number(settings.deviceMemory));
+      replaceGetter(navigator, "hardwareConcurrency", () => Number(settings.hardwareConcurrency));
       if (document.documentElement) document.documentElement.lang = locale;
       globalThis[marker] = { restore: () => restorers.reverse().forEach((restore) => restore()) };
     },
