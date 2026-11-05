@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>TimeSpoofer</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main>
+      <h1>Browser overrides</h1>
+      <label class="toggle-row" for="enabled">
+        <span>Enable spoofing</span>
+        <input id="enabled" type="checkbox" role="switch">
+      </label>
+      <form id="settings-form">
+        <label for="timezone">IANA timezone</label>
+        <select id="timezone" name="timezone" required></select>
+        <label for="language">Browser language</label>
+        <select id="language" name="language" required></select>
+        <label for="device-memory">Reported RAM</label>
+        <select id="device-memory" name="device-memory" required></select>
+        <label for="cpu-threads">Reported CPU threads</label>
+        <select id="cpu-threads" name="cpu-threads" required></select>
+        <button type="submit">Apply settings</button>
+      </form>
+      <p id="status" role="status" aria-live="polite"></p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
