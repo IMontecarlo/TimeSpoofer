@@ -34,11 +34,14 @@ async function updateLanguageHeader(settings) {
   const removeRuleIds = [ruleId];
   const addRules = [];
   if (settings.enabled) {
+    const acceptedLanguages = [settings.language];
     const baseLanguage = settings.language.split("-")[0];
-    const accepted = [...new Set([settings.language, baseLanguage, "en"])];
-    const headerValue = accepted.map((language, index) =>
-      index === 0 ? language : `${language};q=${(1 - index * 0.1).toFixed(1)}`
-    ).join(",");
+    if (baseLanguage.toLowerCase() !== settings.language.toLowerCase()) {
+      acceptedLanguages.push(baseLanguage);
+    }
+    const headerValue = acceptedLanguages
+      .map((language, index) => index === 0 ? language : `${language};q=0.9`)
+      .join(",");
     addRules.push({
       id: ruleId,
       priority: 1,
@@ -46,7 +49,10 @@ async function updateLanguageHeader(settings) {
         type: "modifyHeaders",
         requestHeaders: [{ header: "accept-language", operation: "set", value: headerValue }]
       },
-      condition: { urlFilter: "|http", resourceTypes: ["main_frame", "sub_frame", "xmlhttprequest", "other"] }
+      condition: {
+        urlFilter: "|http",
+        resourceTypes: ["main_frame", "sub_frame", "stylesheet", "script", "image", "font", "object", "xmlhttprequest", "ping", "csp_report", "media", "websocket", "other"]
+      }
     });
   }
   await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds, addRules });
@@ -73,7 +79,10 @@ async function injectIntoTab(tabId, settings, frameIds) {
         Object.defineProperty(object, key, descriptor);
       };
       const replaceValue = (object, key, value) => replace(object, key, { configurable: true, writable: true, value });
-      const replaceGetter = (object, key, getter) => replace(object, key, { configurable: true, enumerable: true, get: getter });
+      const replaceGetter = (object, key, getter) => {
+        const old = Object.getOwnPropertyDescriptor(object, key);
+        replace(object, key, { configurable: true, enumerable: old?.enumerable ?? true, get: getter });
+      };
 
       const timezone = settings.timezone;
       const locale = settings.language;
@@ -102,18 +111,124 @@ async function injectIntoTab(tabId, settings, frameIds) {
         return Math.round((date.getTime() - representedUtc) / 60000);
       };
 
-      function SpoofedDate(...args) {
-        if (!new.target) return new NativeDate().toLocaleString(locale, { timeZone: displayZone });
-        return args.length ? new NativeDate(...args) : new NativeDate();
+      const componentsToUtc = (parts) => {
+        const date = new NativeDate(0);
+        date.setUTCFullYear(parts.year, parts.month, parts.day);
+        date.setUTCHours(parts.hour, parts.minute, parts.second, parts.millisecond);
+        return date.getTime();
+      };
+      const localComponentsToEpoch = (parts) => {
+        const wallTime = componentsToUtc(parts);
+        const offsets = new Set();
+        for (const hours of [-72, -48, -24, -12, 0, 12, 24, 48, 72]) {
+          const sample = new NativeDate(wallTime + hours * 3600000);
+          const sampleOffset = offset(sample);
+          if (Number.isFinite(sampleOffset)) offsets.add(sampleOffset);
+        }
+        const candidates = [...offsets].map((minutes) => wallTime + minutes * 60000);
+        const toWallTime = (timestamp) => {
+          const local = localParts(new NativeDate(timestamp));
+          return local ? componentsToUtc(local) : NaN;
+        };
+        const exactMatches = candidates.filter((candidate) => toWallTime(candidate) === wallTime);
+        if (exactMatches.length) return Math.min(...exactMatches);
+
+        // A wall time in a spring-forward gap maps forward by the size of the gap.
+        const afterGap = candidates
+          .map((candidate) => ({ candidate, wall: toWallTime(candidate) }))
+          .filter(({ wall }) => Number.isFinite(wall) && wall > wallTime)
+          .sort((a, b) => a.wall - b.wall || a.candidate - b.candidate);
+        if (afterGap.length) return afterGap[0].candidate;
+
+        let candidate = wallTime;
+        for (let attempt = 0; attempt < 6; attempt += 1) {
+          const next = wallTime + offset(new NativeDate(candidate)) * 60000;
+          if (!Number.isFinite(next) || next === candidate) break;
+          candidate = next;
+        }
+        return candidate;
+      };
+      const setLocalDateFields = (date, utcSetter, args, recoverInvalid = false) => {
+        const current = localParts(date) || (recoverInvalid
+          ? { year: 1970, month: 0, day: 1, hour: 0, minute: 0, second: 0, millisecond: 0 }
+          : null);
+        if (!current) return NaN;
+        const normalized = new NativeDate(componentsToUtc(current));
+        normalized[utcSetter](...args);
+        const parts = {
+          year: normalized.getUTCFullYear(), month: normalized.getUTCMonth(), day: normalized.getUTCDate(),
+          hour: normalized.getUTCHours(), minute: normalized.getUTCMinutes(), second: normalized.getUTCSeconds(),
+          millisecond: normalized.getUTCMilliseconds()
+        };
+        date.setTime(localComponentsToEpoch(parts));
+        return date.getTime();
+      };
+      const parseLocalIso = (value) => {
+        const match = /^([+-]\d{6}|\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?)?$/.exec(value);
+        if (!match || match[4] === undefined) return null;
+        const fraction = (match[7] || "").slice(0, 3).padEnd(3, "0");
+        return localComponentsToEpoch({
+          year: Number(match[1]), month: Number(match[2]) - 1, day: Number(match[3]),
+          hour: Number(match[4] || 0), minute: Number(match[5] || 0),
+          second: Number(match[6] || 0), millisecond: Number(fraction || 0)
+        });
+      };
+
+      function SpoofedDate(year, month, date, hours, minutes, seconds, milliseconds) {
+        const args = arguments;
+        if (!new.target) return new SpoofedDate().toString();
+        if (args.length === 0) return new NativeDate();
+        if (args.length === 1) {
+          if (typeof year === "string") {
+            const parsed = parseLocalIso(year);
+            if (parsed !== null) return new NativeDate(parsed);
+          }
+          return new NativeDate(year);
+        }
+        let fullYear = Number(year);
+        if (fullYear >= 0 && fullYear <= 99) fullYear += 1900;
+        return new NativeDate(localComponentsToEpoch({
+          year: fullYear,
+          month: Number(month),
+          day: args.length > 2 ? Number(date) : 1,
+          hour: args.length > 3 ? Number(hours) : 0,
+          minute: args.length > 4 ? Number(minutes) : 0,
+          second: args.length > 5 ? Number(seconds) : 0,
+          millisecond: args.length > 6 ? Number(milliseconds) : 0
+        }));
       }
+      replaceValue(SpoofedDate, "name", "Date");
+      replaceValue(SpoofedDate, "length", 7);
       Object.setPrototypeOf(SpoofedDate, NativeDate);
       SpoofedDate.prototype = NativeDate.prototype;
       replaceValue(globalThis, "Date", SpoofedDate);
+      replaceValue(Date.prototype, "constructor", SpoofedDate);
+      replaceValue(SpoofedDate, "parse", (value) => {
+        if (typeof value === "string") {
+          const parsed = parseLocalIso(value);
+          if (parsed !== null) return parsed;
+        }
+        return NativeDate.parse(value);
+      });
       replaceValue(Date.prototype, "getTimezoneOffset", function () { return offset(this); });
       const getters = { getFullYear: "year", getMonth: "month", getDate: "day", getHours: "hour", getMinutes: "minute", getSeconds: "second", getMilliseconds: "millisecond" };
       for (const [method, part] of Object.entries(getters)) replaceValue(Date.prototype, method, function () { return localParts(this)?.[part] ?? NaN; });
       replaceValue(Date.prototype, "getDay", function () { const p = localParts(this); return p ? new NativeDate(NativeDate.UTC(p.year, p.month, p.day)).getUTCDay() : NaN; });
       replaceValue(Date.prototype, "getYear", function () { const p = localParts(this); return p ? p.year - 1900 : NaN; });
+      for (const [method, utcSetter] of Object.entries({
+        setFullYear: "setUTCFullYear", setMonth: "setUTCMonth", setDate: "setUTCDate",
+        setHours: "setUTCHours", setMinutes: "setUTCMinutes", setSeconds: "setUTCSeconds",
+        setMilliseconds: "setUTCMilliseconds"
+      })) {
+        replaceValue(Date.prototype, method, function (...args) {
+          return setLocalDateFields(this, utcSetter, args, method === "setFullYear");
+        });
+      }
+      replaceValue(Date.prototype, "setYear", function (year) {
+        let normalizedYear = Number(year);
+        if (normalizedYear >= 0 && normalizedYear <= 99) normalizedYear += 1900;
+        return setLocalDateFields(this, "setUTCFullYear", [normalizedYear], true);
+      });
       replaceValue(Date.prototype, "toString", function () {
         if (!Number.isFinite(this.getTime())) return "Invalid Date";
         const parts = new NativeDateTimeFormat("en-GB", {
@@ -131,14 +246,27 @@ async function injectIntoTab(tabId, settings, frameIds) {
         const zoneLabel = /^(GMT|UTC)[+-]/.test(zoneName) ? gmtOffset : zoneName;
         return `${part("weekday")} ${part("month")} ${part("day")} ${part("year")} ${part("hour")}:${part("minute")}:${part("second")} ${gmtOffset} (${zoneLabel})`;
       });
-      replaceValue(Date.prototype, "toDateString", function () { return Number.isFinite(this.getTime()) ? new NativeDateTimeFormat("en-US", { timeZone: displayZone, weekday: "short", month: "short", day: "2-digit", year: "numeric" }).format(this) : "Invalid Date"; });
-      replaceValue(Date.prototype, "toTimeString", function () { return Number.isFinite(this.getTime()) ? new NativeDateTimeFormat("en-US", { timeZone: displayZone, hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23", timeZoneName: "short" }).format(this) : "Invalid Date"; });
+      replaceValue(Date.prototype, "toDateString", function () {
+        if (!Number.isFinite(this.getTime())) return "Invalid Date";
+        const parts = new NativeDateTimeFormat("en-US", { timeZone: displayZone, weekday: "short", month: "short", day: "2-digit", year: "numeric" }).formatToParts(this);
+        const part = (type) => parts.find((item) => item.type === type)?.value || "";
+        return `${part("weekday")} ${part("month")} ${part("day")} ${part("year")}`;
+      });
+      replaceValue(Date.prototype, "toTimeString", function () {
+        if (!Number.isFinite(this.getTime())) return "Invalid Date";
+        const parts = new NativeDateTimeFormat("en-GB", { timeZone: displayZone, hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23", timeZoneName: "short" }).formatToParts(this);
+        const part = (type) => parts.find((item) => item.type === type)?.value || "";
+        const offsetMinutes = offset(this);
+        const absoluteOffset = Math.abs(offsetMinutes);
+        const sign = offsetMinutes <= 0 ? "+" : "-";
+        const gmtOffset = `GMT${sign}${String(Math.floor(absoluteOffset / 60)).padStart(2, "0")}${String(absoluteOffset % 60).padStart(2, "0")}`;
+        const name = part("timeZoneName");
+        const zoneLabel = /^(GMT|UTC)[+-]/.test(name) ? gmtOffset : name;
+        return `${part("hour")}:${part("minute")}:${part("second")} ${gmtOffset} (${zoneLabel})`;
+      });
 
       const dateLocaleMethods = {
-        toLocaleString: {
-          year: "numeric", month: "numeric", day: "numeric",
-          hour: "numeric", minute: "2-digit", second: "2-digit"
-        },
+        toLocaleString: { year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" },
         toLocaleDateString: { year: "numeric", month: "numeric", day: "numeric" },
         toLocaleTimeString: { hour: "numeric", minute: "numeric", second: "numeric" }
       };
@@ -150,43 +278,66 @@ async function injectIntoTab(tabId, settings, frameIds) {
       for (const [method, defaultsForMethod] of Object.entries(dateLocaleMethods)) {
         replaceValue(Date.prototype, method, function (requestedLocale, requestedOptions) {
           if (!Number.isFinite(this.getTime())) return "Invalid Date";
-          const options = requestedOptions == null
-            ? { ...defaultsForMethod }
-            : Object.fromEntries(Object.entries(requestedOptions).filter(([key]) => dateTimeOptionNames.has(key)));
-          options.timeZone = displayZone;
-          return new NativeDateTimeFormat(requestedLocale === undefined ? locale : requestedLocale, options).format(this);
+          const options = {};
+          if (requestedOptions != null) {
+            const source = Object(requestedOptions);
+            for (const key of dateTimeOptionNames) {
+              const value = source[key];
+              if (value !== undefined) options[key] = value;
+            }
+          }
+          const componentKeys = ["weekday", "era", "year", "month", "day", "dayPeriod", "hour", "minute", "second", "fractionalSecondDigits", "dateStyle", "timeStyle"];
+          if (!componentKeys.some((key) => options[key] !== undefined)) Object.assign(options, defaultsForMethod);
+          if (options.timeZone === undefined) options.timeZone = displayZone;
+          const locales = requestedLocale === undefined ? locale : requestedLocale;
+          return new NativeDateTimeFormat(locales, options).format(this);
         });
       }
 
       function SpoofedDateTimeFormat(...args) {
-        const options = { ...(args[1] || {}) };
+        const options = args[1] == null ? {} : Object.create(Object(args[1]));
         if (!options.timeZone) options.timeZone = displayZone;
         const formatter = new NativeDateTimeFormat(args[0] === undefined ? locale : args[0], options);
         formatterZones.set(formatter, options.timeZone);
         return formatter;
       }
+      replaceValue(SpoofedDateTimeFormat, "name", "DateTimeFormat");
+      replaceValue(SpoofedDateTimeFormat, "length", 0);
       Object.setPrototypeOf(SpoofedDateTimeFormat, NativeDateTimeFormat);
       SpoofedDateTimeFormat.prototype = NativeDateTimeFormat.prototype;
       replaceValue(Intl, "DateTimeFormat", SpoofedDateTimeFormat);
+      replaceValue(NativeDateTimeFormat.prototype, "constructor", SpoofedDateTimeFormat);
       const formatterZones = new WeakMap();
       const nativeResolvedOptions = NativeDateTimeFormat.prototype.resolvedOptions;
       replaceValue(NativeDateTimeFormat.prototype, "resolvedOptions", function () {
         const options = nativeResolvedOptions.call(this);
         return { ...options, timeZone: formatterZones.get(this) || options.timeZone };
       });
+      const nativeNumberToLocaleString = Number.prototype.toLocaleString;
+      replaceValue(Number.prototype, "toLocaleString", function (requestedLocale, requestedOptions) {
+        const locales = requestedLocale === undefined ? locale : requestedLocale;
+        return nativeNumberToLocaleString.call(this, locales, requestedOptions);
+      });
       for (const key of ["NumberFormat", "Collator", "PluralRules", "RelativeTimeFormat", "ListFormat", "DisplayNames", "Segmenter"]) {
         const Native = Intl[key];
         if (typeof Native !== "function") continue;
         function LocaleConstructor(...args) { return new Native(args[0] === undefined ? locale : args[0], ...args.slice(1)); }
+        replaceValue(LocaleConstructor, "name", key);
+        replaceValue(LocaleConstructor, "length", Native.length);
         Object.setPrototypeOf(LocaleConstructor, Native);
         LocaleConstructor.prototype = Native.prototype;
         replaceValue(Intl, key, LocaleConstructor);
+        replaceValue(Native.prototype, "constructor", LocaleConstructor);
       }
 
-      replaceGetter(navigator, "language", () => locale);
-      replaceGetter(navigator, "languages", () => [locale]);
-      replaceGetter(navigator, "deviceMemory", () => Number(settings.deviceMemory));
-      replaceGetter(navigator, "hardwareConcurrency", () => Number(settings.hardwareConcurrency));
+      const navigatorPrototype = Object.getPrototypeOf(navigator);
+      const navigatorLanguages = [locale];
+      const baseLanguage = locale.split("-")[0];
+      if (baseLanguage.toLowerCase() !== locale.toLowerCase()) navigatorLanguages.push(baseLanguage);
+      replaceGetter(navigatorPrototype, "language", () => locale);
+      replaceGetter(navigatorPrototype, "languages", () => [...navigatorLanguages]);
+      replaceGetter(navigatorPrototype, "deviceMemory", () => Number(settings.deviceMemory));
+      replaceGetter(navigatorPrototype, "hardwareConcurrency", () => Number(settings.hardwareConcurrency));
       if (document.documentElement) document.documentElement.lang = locale;
       globalThis[marker] = { restore: () => restorers.reverse().forEach((restore) => restore()) };
     },
