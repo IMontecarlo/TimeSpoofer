@@ -10,7 +10,6 @@ TimeSpoofer is a Timezone spoofing extension for Chromium-based browsers. It cha
 ## Features
 
 - IANA timezone selection, for example `Europe/Berlin`;
-- UTC offset displayed next to each timezone;
 - overrides for local `Date` operations and `Intl` formatting;
 - browser language selection;
 - `navigator.language` and `navigator.languages` overrides;
@@ -18,8 +17,6 @@ TimeSpoofer is a Timezone spoofing extension for Chromium-based browsers. It cha
 - selectable reported `navigator.deviceMemory`;
 - selectable `navigator.hardwareConcurrency`;
 - a global enable/disable switch;
-
-The extension does not use the Chrome Debugger API and does not show the DevTools debugging notification.
 
 ## Installation
 
@@ -67,7 +64,6 @@ TimeSpoofer — это расширение для браузеров на ба�
 ## Возможности
 
 - выбор IANA часового пояса, например `Europe/Berlin`;
-- отображение UTC-смещения рядом с каждой зоной;
 - подмена локальных операций `Date` и форматирования `Intl`;
 - выбор языка браузера;
 - подмена `navigator.language` и `navigator.languages`;
@@ -75,8 +71,6 @@ TimeSpoofer — это расширение для браузеров на ба�
 - выбор отображаемого объёма `navigator.deviceMemory`;
 - выбор `navigator.hardwareConcurrency`;
 - глобальное включение и выключение расширения;
-
-Расширение не использует Chrome Debugger API и не показывает уведомление о подключении DevTools.
 
 ## Установка
 
