@@ -16,21 +16,21 @@ TimeSpoofer is a Timezone spoofing extension for Chromium-based browsers. It cha
 - `Accept-Language` request-header rewriting through `declarativeNetRequest`;
 - selectable reported `navigator.deviceMemory`;
 - selectable `navigator.hardwareConcurrency`;
-- a global enable/disable switch;
 
 ## Installation
 
 1. Open `chrome://extensions` or the equivalent extensions page in your Chromium-based browser.
 2. Enable **Developer mode**.
 3. Select **Load unpacked**.
-4. Choose the repository root folder.
+4. Unpack the archive and select the extension's root folder.
 5. Open the extension popup, enable **Enable spoofing**, choose the settings, and press **Apply settings**.
 
-After changing the language, open HTTP(S) tabs may need to be reloaded so that new requests carry the updated `Accept-Language` header.
+After changing the language, open tabs may need to be reloaded so that new requests carry the updated `Accept-Language` header.
 
-## Limitations of the non-Debugger mode
+## Extension Limitations
 
-The non-Debugger mode does not change Chromium internals. It uses JavaScript injection in the MAIN world and `declarativeNetRequest` network rules.
+Due to the fact that the extension works without using a debugger, it does not change the settings of the Chromium engine itself.
+The extension uses JavaScript injection into the MAIN world and `declarativeNetRequest` network rules.
 
 Therefore:
 
@@ -70,21 +70,21 @@ TimeSpoofer — это расширение для браузеров на ба�
 - изменение HTTP-заголовка `Accept-Language` через `declarativeNetRequest`;
 - выбор отображаемого объёма `navigator.deviceMemory`;
 - выбор `navigator.hardwareConcurrency`;
-- глобальное включение и выключение расширения;
 
 ## Установка
 
 1. Откройте `chrome://extensions` или аналогичную страницу расширений Chromium-браузера.
 2. Включите **Developer mode / Режим разработчика**.
 3. Нажмите **Load unpacked / Загрузить распакованное расширение**.
-4. Выберите корневую папку репозитория.
+4. Распакуйте архив и выберите корневую папку расширения.
 5. Откройте popup расширения, включите **Enable spoofing**, выберите настройки и нажмите **Apply settings**.
 
-После изменения языка открытые HTTP(S)-вкладки могут потребовать перезагрузки, чтобы новый `Accept-Language` был отправлен в новых запросах.
+После изменения языка открытые вкладки могут потребовать перезагрузки, чтобы новый `Accept-Language` был отправлен в новых запросах.
 
-## Ограничения режима без Debugger
+## Ограничения функционала расширения
 
-Режим без `debugger` не меняет настройки самого Chromium. Он использует JavaScript-инъекцию в MAIN world и сетевые правила `declarativeNetRequest`.
+По причине того, что расширение работает без использования отладчика, оно не меняет настройки самого движка Chromium.
+Расширение использует JavaScript-инъекцию в MAIN world и сетевые правила `declarativeNetRequest`.
 
 Из-за этого:
 
